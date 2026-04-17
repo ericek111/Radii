@@ -30,6 +30,7 @@ from .radii_dialog import RadiiDialog
 
 CIRCLES_LAYER_NAME = "Radii — geodesic circles"
 CENTERS_LAYER_NAME = "Radii — centers"
+PROJECT_SCOPE = "Radii"
 
 
 class RadiiPlugin:
@@ -63,12 +64,95 @@ class RadiiPlugin:
         self.iface.addPluginToVectorMenu("&Radii", self._action)
         self.iface.addToolBarIcon(self._action)
 
+        project = QgsProject.instance()
+        project.readProject.connect(self._on_project_read)
+        project.cleared.connect(self._on_project_cleared)
+        # The plugin usually loads before any project; but when the user
+        # enables it mid-session, restore state from the current project.
+        QTimer.singleShot(0, self._restore_from_project)
+
     def unload(self):
         self._stop_watching()
+        try:
+            project = QgsProject.instance()
+            project.readProject.disconnect(self._on_project_read)
+            project.cleared.disconnect(self._on_project_cleared)
+        except (TypeError, RuntimeError):
+            pass
         if self._action is not None:
             self.iface.removePluginVectorMenu("&Radii", self._action)
             self.iface.removeToolBarIcon(self._action)
             self._action = None
+
+    # ------------------------------------------------------------------ persistence
+
+    def _on_project_read(self, _doc=None):
+        self._restore_from_project()
+
+    def _on_project_cleared(self):
+        self._stop_watching()
+        self._reload_timer.stop()
+        self._settings = {
+            "csv_path": "",
+            "tolerance_m": 1.0,
+            "autoreload": True,
+            "show_centers": True,
+            "default_color": "#3388ff",
+        }
+        self._circles_layer_id = None
+        self._centers_layer_id = None
+
+    def _restore_from_project(self):
+        project = QgsProject.instance()
+
+        def _read_str(key, default):
+            v, ok = project.readEntry(PROJECT_SCOPE, key, default)
+            return v if ok else default
+
+        def _read_bool(key, default):
+            v, ok = project.readBoolEntry(PROJECT_SCOPE, key, default)
+            return v if ok else default
+
+        def _read_double(key, default):
+            v, ok = project.readDoubleEntry(PROJECT_SCOPE, key, default)
+            return v if ok else default
+
+        self._settings = {
+            "csv_path": _read_str("csv_path", ""),
+            "tolerance_m": _read_double("tolerance_m", 1.0),
+            "autoreload": _read_bool("autoreload", True),
+            "show_centers": _read_bool("show_centers", True),
+            "default_color": _read_str("default_color", "#3388ff"),
+        }
+        self._circles_layer_id = _read_str("circles_layer_id", "") or None
+        self._centers_layer_id = _read_str("centers_layer_id", "") or None
+
+        if not self._settings["csv_path"]:
+            return
+        if not os.path.exists(self._settings["csv_path"]):
+            self._message(
+                f"Radii: saved CSV not found — {self._settings['csv_path']}",
+                Qgis.Warning,
+            )
+            return
+        self._start_watching(self._settings["csv_path"])
+        self._reload_now()
+
+    def _save_to_project(self):
+        project = QgsProject.instance()
+        project.writeEntry(PROJECT_SCOPE, "csv_path", self._settings["csv_path"])
+        project.writeEntryDouble(PROJECT_SCOPE, "tolerance_m",
+                                 float(self._settings["tolerance_m"]))
+        project.writeEntry(PROJECT_SCOPE, "autoreload",
+                           bool(self._settings["autoreload"]))
+        project.writeEntry(PROJECT_SCOPE, "show_centers",
+                           bool(self._settings["show_centers"]))
+        project.writeEntry(PROJECT_SCOPE, "default_color",
+                           self._settings["default_color"])
+        project.writeEntry(PROJECT_SCOPE, "circles_layer_id",
+                           self._circles_layer_id or "")
+        project.writeEntry(PROJECT_SCOPE, "centers_layer_id",
+                           self._centers_layer_id or "")
 
     # ------------------------------------------------------------------ run
 
@@ -77,6 +161,7 @@ class RadiiPlugin:
         if not dlg.exec_():
             return
         self._settings = dlg.values()
+        self._save_to_project()
         if not self._settings["csv_path"]:
             self._message("Radii: no CSV file selected", Qgis.Warning)
             return
@@ -179,6 +264,7 @@ class RadiiPlugin:
             self._replace_features(centers_layer, self._build_center_features(points))
             self._apply_per_feature_marker(centers_layer, default_color)
 
+        self._save_to_project()
         self.iface.mapCanvas().refreshAllLayers()
 
     def _build_circle_features(self, points, tolerance):
