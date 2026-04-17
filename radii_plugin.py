@@ -28,7 +28,7 @@ from qgis.core import (
 
 from .csv_parser import CsvParseError, RadiusPoint, load_csv
 from .geodesic import geodesic_circle_vertices, segments_for_tolerance
-from .radii_dialog import RadiiDialog
+from .radii_dialog import RESULT_CHANGE, RadiiDialog
 
 
 PROJECT_SCOPE = "Radii"
@@ -87,6 +87,7 @@ class RadiiPlugin:
         project = QgsProject.instance()
         project.readProject.connect(self._on_project_read)
         project.cleared.connect(self._on_project_cleared)
+        project.layersRemoved.connect(self._on_layers_removed)
         QTimer.singleShot(0, self._restore_from_project)
 
     def unload(self):
@@ -98,6 +99,7 @@ class RadiiPlugin:
             project = QgsProject.instance()
             project.readProject.disconnect(self._on_project_read)
             project.cleared.disconnect(self._on_project_cleared)
+            project.layersRemoved.disconnect(self._on_layers_removed)
         except (TypeError, RuntimeError):
             pass
         if self._action is not None:
@@ -106,8 +108,33 @@ class RadiiPlugin:
             self._action = None
 
     def run(self):
-        from .radii_manager import RadiiManagerDialog
-        RadiiManagerDialog(self, self.iface.mainWindow()).exec_()
+        existing = self._instance_for_active_layer()
+        initial = existing.to_values() if existing is not None else None
+        dlg = RadiiDialog(
+            self.iface.mainWindow(),
+            initial=initial,
+            allow_change=existing is not None,
+        )
+        if not dlg.exec_():
+            return
+        values = dlg.values()
+        if not values["csv_path"]:
+            self._message("Radii: no CSV file selected", Qgis.Warning)
+            return
+        if dlg.result_mode() == RESULT_CHANGE and existing is not None:
+            self.update_instance(existing.id, values)
+        else:
+            self.add_instance(values)
+
+    def _instance_for_active_layer(self) -> Optional[RadiiInstance]:
+        active = self.iface.activeLayer()
+        if active is None:
+            return None
+        lid = active.id()
+        for inst in self._instances.values():
+            if lid == inst.circles_layer_id or lid == inst.centers_layer_id:
+                return inst
+        return None
 
     # ------------------------------------------------------------------ public API used by the manager
 
@@ -156,6 +183,31 @@ class RadiiPlugin:
 
     def _on_project_read(self, _doc=None):
         self._restore_from_project()
+
+    def _on_layers_removed(self, layer_ids):
+        """Drop instances whose layers the user removed via the Layers panel."""
+        gone = set(layer_ids)
+        dropped = False
+        for iid in list(self._instances.keys()):
+            inst = self._instances[iid]
+            owns = ((inst.circles_layer_id and inst.circles_layer_id in gone)
+                    or (inst.centers_layer_id and inst.centers_layer_id in gone))
+            if not owns:
+                continue
+            # Remove the companion layer too, if it's still around.
+            for other in (inst.circles_layer_id, inst.centers_layer_id):
+                if other and other not in gone:
+                    self._remove_layer(other)
+            self._instances.pop(iid)
+            t = self._reload_timers.pop(iid, None)
+            if t is not None:
+                t.stop()
+                t.deleteLater()
+            self._last_mtime.pop(iid, None)
+            dropped = True
+        if dropped:
+            self._rebuild_watcher()
+            self._save_to_project()
 
     def _on_project_cleared(self):
         self._stop_watching()

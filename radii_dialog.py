@@ -4,7 +4,6 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -18,13 +17,19 @@ from qgis.PyQt.QtWidgets import (
 from .geodesic import segments_for_tolerance
 
 
+RESULT_CANCELLED = "cancelled"
+RESULT_ADD = "add"
+RESULT_CHANGE = "change"
+
+
 class RadiiDialog(QDialog):
-    def __init__(self, parent=None, initial=None):
+    def __init__(self, parent=None, initial=None, allow_change=False):
         super().__init__(parent)
         self.setWindowTitle("Radii — geodesic circles from CSV")
         self.setMinimumWidth(520)
 
         initial = initial or {}
+        self._result_mode = RESULT_CANCELLED
 
         self._format_label = QLabel(
             "<b>CSV columns:</b> <code>lat, lon, height, radius, color</code>"
@@ -83,18 +88,43 @@ class RadiiDialog(QDialog):
         form.addRow(self._autoreload_chk)
         form.addRow(self._show_centers_chk)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        cancel_btn = QPushButton("Cancel")
+        self._add_btn = QPushButton("Add as new")
+        self._change_btn = QPushButton("Change selected")
+        cancel_btn.clicked.connect(self.reject)
+        self._add_btn.clicked.connect(self._on_add)
+        self._change_btn.clicked.connect(self._on_change)
+
+        self._add_btn.setEnabled(True)
+        self._change_btn.setEnabled(allow_change)
+        if allow_change:
+            self._change_btn.setDefault(True)
+        else:
+            self._add_btn.setDefault(True)
+
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self._add_btn)
+        btn_row.addWidget(self._change_btn)
 
         root = QVBoxLayout(self)
         root.addWidget(self._format_label)
         root.addLayout(form)
-        root.addWidget(buttons)
+        root.addLayout(btn_row)
 
         self._update_estimate_label()
+
+    def _on_add(self):
+        self._result_mode = RESULT_ADD
+        self.accept()
+
+    def _on_change(self):
+        self._result_mode = RESULT_CHANGE
+        self.accept()
+
+    def result_mode(self) -> str:
+        return self._result_mode
 
     def _on_browse(self):
         path, _ = QFileDialog.getOpenFileName(
