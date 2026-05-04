@@ -47,7 +47,7 @@ class RadiiDialog(QDialog):
             "</ul>"
         )
         self._format_label.setWordWrap(True)
-        self._format_label.setTextFormat(Qt.RichText)
+        self._format_label.setTextFormat(Qt.TextFormat.RichText)
 
         self._csv_edit = QLineEdit(initial.get("csv_path", ""))
         browse_btn = QPushButton("Browse…")
@@ -65,7 +65,7 @@ class RadiiDialog(QDialog):
         self._tolerance_spin.valueChanged.connect(self._update_estimate_label)
 
         self._estimate_label = QLabel()
-        self._estimate_label.setTextFormat(Qt.RichText)
+        self._estimate_label.setTextFormat(Qt.TextFormat.RichText)
 
         tol_row = QHBoxLayout()
         tol_row.addWidget(self._tolerance_spin)

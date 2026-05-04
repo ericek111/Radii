@@ -1,6 +1,7 @@
 [general]
 name=Radii
 qgisMinimumVersion=3.16
+qgisMaximumVersion=4.99
 description=Draw geographically accurate (geodesic) circles around points defined in a CSV file.
 about=Loads points from a CSV (lat, lon, height, radius, color) and renders true WGS-84 geodesic circles. Supports decimal degrees or DMS coordinates, automatic reload on file change, and user-defined accuracy tolerance with adaptive segmentation.
 version=1.0.0

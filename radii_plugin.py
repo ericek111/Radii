@@ -115,7 +115,7 @@ class RadiiPlugin:
             initial=initial,
             allow_change=existing is not None,
         )
-        if not dlg.exec_():
+        if not dlg.exec():
             return
         values = dlg.values()
         if not values["csv_path"]:
